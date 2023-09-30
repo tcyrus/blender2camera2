@@ -12,13 +12,11 @@
 # This script was released under the MIT license. See LICENSE.md for details.
 
 import bpy
-import copy
-import hashlib
 import json
 import logging
 import math
 import mathutils
-import os
+import pathlib
 import random
 import time
 
@@ -202,7 +200,7 @@ class B2C2Export(Operator, ExportHelper):
     def execute(self, context):
 
         # Add file log handler
-        if (True == CONFIG_ENABLE_LOGGING_TO_DISK):
+        if CONFIG_ENABLE_LOGGING_TO_DISK is True:
             logger_start_disk()
 
         # Export the movement script
@@ -255,7 +253,7 @@ def export_main(
 
     # Track script running time
     now_head = datetime.now()
-    logger.debug('Export started at ' + str(now_head))
+    logger.debug('Export started at %s', now_head)
 
     '''
     Store a list of selected objects (if any)
@@ -287,23 +285,22 @@ def export_main(
             camera_name = obj_name.lower()
 
             if camera_name.startswith(CONFIG_CAMERA_PREFIX):
-                logger.debug('Found camera with name ' + obj_name)
+                logger.debug('Found camera with name %s', obj_name)
                 cameras.append(bpy.data.objects[obj_name])
 
-    logger.debug('Found ' + str(len(cameras)) + ' camera(s) to export')
+    logger.debug('Found %d camera(s) to export', len(cameras))
 
     # --------------------------------------------------------------------------
 
     '''
     Create Temporary Export Object
 
-    hashlib is involved so B2C2 can generate a random name for the temporary
+    random is involved so B2C2 can generate a random name for the temporary
     object. If the export object name conflicts with something that is already
     in your Blend file, go buy a lottery ticket.
     '''
-    m = hashlib.sha1()
-    m.update(str(random.getrandbits(128)).encode('utf-8'))
-    export_obj_name = CONFIG_EXPORT_OBJECT_PREFIX + str(m.hexdigest()[:20])
+    rand_suffix = '%0x' % random.getrandbits(80)
+    export_obj_name = CONFIG_EXPORT_OBJECT_PREFIX + rand_suffix
 
     bpy.ops.object.empty_add()
     export_obj = bpy.context.active_object
@@ -332,7 +329,7 @@ def export_main(
     # Loop through each (b2c2) camera in the scene.
     for camera in cameras:
 
-        logger.debug('Retrieving data for camera    : ' + str(camera.name))
+        logger.debug('Retrieving data for camera    : %s', camera.name)
 
         # Fix the camera sensor values, so FOV in Blender renders will match
         # Beat Saber FOV (only needed for post-processing with chroma key
@@ -361,7 +358,7 @@ def export_main(
             scene.frame_set(frame)
             layer.update()
 
-            mw_unity = copy.deepcopy(export_obj.matrix_world)
+            mw_unity = export_obj.matrix_world.copy()
 
             '''
             Field-of-View (FOV) Notes
@@ -380,7 +377,7 @@ def export_main(
             https://docs.unity3d.com/ScriptReference/Camera-fieldOfView.html
 
             How Blender handles FOV:
-            https://blender.stackexchange.com/questions/23431/how-to-set-camera-horizontal-and-vertical-fov
+            https://blender.stackexchange.com/a/38571
             https://docs.blender.org/api/current/bpy.types.Camera.html
 
             Fortunately we don't have to worry about any of this mess, since
@@ -401,15 +398,15 @@ def export_main(
             (rx, rz, ry) = mw_unity.to_euler('YXZ')
 
             # Pack Unity camera data in a temporary dictionary.
-            dict_unity = {}
-            dict_unity['frame'] = frame
-            dict_unity['pos'] = (px, py, pz)
-            dict_unity['rot'] = (-rx, -ry, -rz)
-            dict_unity['fov'] = fov
+            dict_unity = {
+                'frame': frame,
+                'pos': (px, py, pz),
+                'rot': (-rx, -ry, -rz),
+                'fov': fov
+            }
 
             # Append data to the camera's list inside the path dictionary.
-            if camera.name not in paths:
-                paths[camera.name] = []
+            paths.setdefault(camera.name, [])
 
             paths[camera.name].append(dict_unity)
 
@@ -456,8 +453,7 @@ def export_main(
     for camera_name in paths:
 
         # Create the camera's frame list inside the path dictionary
-        if camera_name not in movement:
-            movement[camera_name] = {}
+        movement.setdefault(camera_name, {})
 
         # Store optional global settings
         movement[camera_name]['syncToSong'] = setting_syncToSong
@@ -466,22 +462,24 @@ def export_main(
         # Store frames
         movement[camera_name]['frames'] = []
 
-        for i,frame in enumerate(paths[camera_name]):
+        for i, frame in enumerate(paths[camera_name]):
             temp = {}
 
             # Write the frame index to help with debugging. Camera2 ignores
             # this field with no ill effects.
             temp['frame_index'] = i + 1
 
-            temp['position'] = {}
-            temp['position']['x'] = round(frame['pos'][0], 3)
-            temp['position']['y'] = round(frame['pos'][1], 3)
-            temp['position']['z'] = round(frame['pos'][2], 3)
+            temp['position'] = {
+                'x': round(frame['pos'][0], 3),
+                'y': round(frame['pos'][1], 3),
+                'z': round(frame['pos'][2], 3)
+            }
 
-            temp['rotation'] = {}
-            temp['rotation']['x'] = round(math.degrees(frame['rot'][0]), 3)
-            temp['rotation']['y'] = round(math.degrees(frame['rot'][1]), 3)
-            temp['rotation']['z'] = round(math.degrees(frame['rot'][2]), 3)
+            temp['rotation'] = {
+                'x': round(math.degrees(frame['rot'][0]), 3),
+                'y': round(math.degrees(frame['rot'][1]), 3),
+                'z': round(math.degrees(frame['rot'][2]), 3)
+            }
 
             temp['FOV'] = round(frame['fov'], 3)
             temp['duration'] = duration
@@ -498,20 +496,20 @@ def export_main(
     file.
     '''
 
-    path_base_noext = os.path.splitext(filepath)
+    path_base_noext = pathlib.Path(filepath).stem
 
     for camera_name in movement:
-        path_target = path_base_noext[0] + '_' + camera_name + '.json'
+        path_target = path_base_noext + '_' + camera_name + '.json'
 
         # Open file for writing
         with open(path_target, 'w') as fh:
-            fh.write(json.dumps(movement[camera_name], indent=4, sort_keys=True))
+            json.dump(movement[camera_name], fh, indent=4, sort_keys=True)
 
     # Track script running time
     now_tail = datetime.now()
 
-    logger.debug('Export finished at ' + str(now_tail))
-    logger.debug('Export took ' + str(now_tail - now_head))
+    logger.debug('Export finished at %s', now_tail)
+    logger.debug('Export took %s', (now_tail - now_head))
 
     return {'FINISHED'}
 
@@ -525,17 +523,19 @@ def logger_start_disk():
 
         # Create formatter
         formatter = logging.Formatter(
-            fmt='[%(process)d] %(levelname)s: %(module)s.%(funcName)s(): %(message)s')
+            fmt='[%(process)d] %(levelname)s: %(module)s.%(funcName)s(): %(message)s'
+        )
 
+        filepath = pathlib.Path(bpy.data.filepath)
+        
         # If the log directory does not exist, create it
-        log_path = os.path.join(os.path.dirname(bpy.data.filepath), 'logs')
-        if not os.path.exists(log_path):
-            os.mkdir(log_path)
+        log_path = filepath.parent.joinpath('logs')
+        log_path.mkdir(exist_ok=True)
 
         # Build file path
-        fh_path = os.path.basename(bpy.data.filepath)
+        fh_path = bpy.data.filepath.name
         fh_path += '-' + time.strftime("%Y%m%d-%H%M%S") + '.log'
-        fh_path = os.path.join(log_path, fh_path)
+        fh_path = log_path.joinpath(fh_path)
 
         # Point the logger to the file
         fh = logging.FileHandler(fh_path)
