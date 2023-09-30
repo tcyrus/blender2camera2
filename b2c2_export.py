@@ -299,8 +299,10 @@ def export_main(
     object. If the export object name conflicts with something that is already
     in your Blend file, go buy a lottery ticket.
     '''
-    rand_suffix = '%0x' % random.getrandbits(80)
-    export_obj_name = CONFIG_EXPORT_OBJECT_PREFIX + rand_suffix
+    export_obj_name = None
+    while export_obj_name is None or export_obj_name in bpy.data.objects:
+        rand_suffix = '%0x' % random.getrandbits(80)
+        export_obj_name = CONFIG_EXPORT_OBJECT_PREFIX + rand_suffix
 
     bpy.ops.object.empty_add()
     export_obj = bpy.context.active_object
@@ -338,6 +340,8 @@ def export_main(
             camera.data.sensor_fit      = CONFIG_CAMERA_SENSOR_FIT
             camera.data.sensor_width    = CONFIG_CAMERA_SENSOR_WIDTH
             camera.data.sensor_height   = CONFIG_CAMERA_SENSOR_HEIGHT
+
+        paths.setdefault(camera.name, [])
 
         # For each frame in the scene...
         for frame in range(scene.frame_start, scene.frame_end + 1):
@@ -406,8 +410,6 @@ def export_main(
             }
 
             # Append data to the camera's list inside the path dictionary.
-            paths.setdefault(camera.name, [])
-
             paths[camera.name].append(dict_unity)
 
     # Clean up the temporary export object.
